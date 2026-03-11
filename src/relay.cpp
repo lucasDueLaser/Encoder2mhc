@@ -22,7 +22,7 @@ void relayUpdate() {
     unsigned long now = millis();
 
     // Encoder stopped: drop relay and reset qualification.
-    if (!sys.moving) {
+    if (!sys.relayEligible) {
         _movingSinceMs = 0;
         _moveQualified = false;
 

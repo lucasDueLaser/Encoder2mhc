@@ -45,6 +45,9 @@ static int8_t  _startCounter = 0;
 static uint8_t _missCycles = 0;
 
 static uint32_t _transitionTotal = 0;
+static uint8_t  _relayScore = 0;
+static bool     _relayEligible = false;
+static unsigned long _lastRelayEvidenceMs = 0;
 
 // Last movement trigger for debug
 static const char* _lastTrigger = "nenhum";
@@ -198,6 +201,9 @@ bool encoderInit() {
     _startCounter = 0;
     _missCycles = 0;
     _transitionTotal = 0;
+    _relayScore = 0;
+    _relayEligible = false;
+    _lastRelayEvidenceMs = 0;
     _aState = -1;
     _bState = -1;
     _lastAB = 0xFF;
@@ -246,9 +252,15 @@ void encoderUpdate() {
 
     if (validAB) {
         uint8_t ab = (uint8_t)((a << 1) | b);
+        uint16_t swingA = (uint16_t)(aWin.maxMv - aWin.minMv);
+        uint16_t swingB = (uint16_t)(bWin.maxMv - bWin.minMv);
+        uint16_t swingMax = (swingA > swingB) ? swingA : swingB;
+        uint8_t dynTotal = (uint8_t)(aWin.dynamicEdges + bWin.dynamicEdges);
 
         const char *trigger = nullptr;
         bool detected = detectMovement(aWin, bWin, ab, &trigger);
+        uint8_t sampleScore = 0;
+        bool strongEvidence = false;
 
         if (detected && trigger != nullptr) {
             bool isEdgeBased = (strcmp(trigger, "high-speed-avg") != 0);
@@ -266,6 +278,20 @@ void encoderUpdate() {
             if (!_moving && _startCounter >= (int8_t)START_TRANSITIONS) {
                 _moving = true;
             }
+
+            if (strcmp(trigger, "classical") == 0) {
+                sampleScore = 5U;
+                strongEvidence = true;
+            } else if (strcmp(trigger, "dynamic-edges") == 0) {
+                sampleScore = (dynTotal >= 4U || swingMax >= 170U) ? 4U : 2U;
+                strongEvidence = (dynTotal >= 3U) || (swingMax >= 170U);
+            } else if (strcmp(trigger, "wide-swing") == 0) {
+                sampleScore = (swingMax >= 180U) ? 3U : 2U;
+                strongEvidence = (swingMax >= 180U);
+            } else if (strcmp(trigger, "high-speed-avg") == 0) {
+                sampleScore = 1U;
+                strongEvidence = false;
+            }
         } else {
             if (_missCycles < 255U) {
                 _missCycles++;
@@ -280,6 +306,34 @@ void encoderUpdate() {
             _lastTrigger = "nenhum";
         }
 
+        // Leaky score: ignora movimentos suaves isolados e segura alta continua.
+        if (sampleScore > 0U) {
+            uint16_t sum = (uint16_t)_relayScore + (uint16_t)sampleScore;
+            _relayScore = (sum > 40U) ? 40U : (uint8_t)sum;
+        } else if (_relayScore > 0U) {
+            _relayScore--;
+        }
+
+        if (strongEvidence) {
+            _lastRelayEvidenceMs = millis();
+            sys.lastRelayEvidenceMs = _lastRelayEvidenceMs;
+        }
+
+        if (!_relayEligible) {
+            if (_relayScore >= cfg.relayScoreOn) {
+                // Exige evidencia recente para evitar subir com ruído lento.
+                if (_lastRelayEvidenceMs > 0U && (millis() - _lastRelayEvidenceMs) <= cfg.relayEvidenceTimeoutMs) {
+                    _relayEligible = true;
+                }
+            }
+        } else {
+            bool stale = (_lastRelayEvidenceMs == 0U) ||
+                         ((millis() - _lastRelayEvidenceMs) > cfg.relayEvidenceTimeoutMs);
+            if (stale && _relayScore <= cfg.relayScoreOff) {
+                _relayEligible = false;
+            }
+        }
+
         _lastAB = ab;
     }
 
@@ -291,10 +345,15 @@ void encoderUpdate() {
             _moving = false;
             _startCounter = 0;
             _missCycles = 0;
+            _relayEligible = false;
+            _relayScore = 0;
+            _lastRelayEvidenceMs = 0;
         }
     }
 
     sys.moving = _moving;
+    sys.relayEligible = _relayEligible;
+    sys.relayScore = _relayScore;
     sys.totalEdges = (int32_t)_transitionTotal;
 }
 
@@ -306,6 +365,9 @@ void encoderReset() {
     _startCounter = 0;
     _missCycles = 0;
     _transitionTotal = 0;
+    _relayScore = 0;
+    _relayEligible = false;
+    _lastRelayEvidenceMs = 0;
     _aState = -1;
     _bState = -1;
     _lastAB = 0xFF;
@@ -315,7 +377,10 @@ void encoderReset() {
     _bMv = readMv(ENCODER_B_PIN);
 
     sys.moving = false;
+    sys.relayEligible = false;
     sys.lastMoveMs = 0;
+    sys.lastRelayEvidenceMs = 0;
+    sys.relayScore = 0;
     sys.totalEdges = 0;
 
     Serial.println("Encoder zerado");

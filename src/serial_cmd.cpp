@@ -8,10 +8,15 @@ void serialPrintStatus() {
     Serial.println("------------------------------------------");
     encoderPrintStatus();
     Serial.print("  Relay:        "); Serial.println(sys.relayOn ? "ON" : "OFF");
+    Serial.print("  Mov. bruto:   "); Serial.println(sys.moving ? "SIM" : "NAO");
+    Serial.print("  Relay ok:     "); Serial.println(sys.relayEligible ? "SIM" : "NAO");
+    Serial.print("  Relay score:  "); Serial.println(sys.relayScore);
     Serial.print("  Pulso ON:     "); Serial.print(cfg.pulseOnMs); Serial.println(" ms");
     Serial.print("  Intervalo:    "); Serial.print(cfg.pulseIntervalMs); Serial.println(" ms");
     Serial.print("  Min bordas:   "); Serial.println(cfg.minEdges);
     Serial.print("  Timeout:      "); Serial.print(cfg.stopTimeoutMs); Serial.println(" ms");
+    Serial.print("  Relay ON/OFF: "); Serial.print(cfg.relayScoreOn); Serial.print(" / "); Serial.println(cfg.relayScoreOff);
+    Serial.print("  Relay T evid: "); Serial.print(cfg.relayEvidenceTimeoutMs); Serial.println(" ms");
     Serial.println("------------------------------------------");
 }
 
@@ -27,6 +32,9 @@ void serialPrintMenu() {
     Serial.println("  P=XXX  = Duracao pulso ON  ex:P=100");
     Serial.println("  E=X    = Min bordas detect. ex:E=3");
     Serial.println("  W=XXX  = Timeout parada ms ex:W=500");
+    Serial.println("  RON=X  = Score para liberar relay ex:RON=10");
+    Serial.println("  ROFF=X = Score para cortar relay ex:ROFF=4");
+    Serial.println("  RT=XXX = Timeout evidencia relay ms ex:RT=1200");
     Serial.println("==========================================\n");
 }
 
@@ -86,6 +94,36 @@ void serialCmdUpdate() {
             Serial.print("Timeout parada: "); Serial.print(v); Serial.println(" ms");
         } else {
             Serial.println("Minimo 100ms. Ex: W=500");
+        }
+    } else if (input.startsWith("RON=")) {
+        uint8_t v = (uint8_t)input.substring(4).toInt();
+        if (v >= 2 && v <= 40) {
+            cfg.relayScoreOn = v;
+            if (cfg.relayScoreOff >= cfg.relayScoreOn) {
+                cfg.relayScoreOff = (cfg.relayScoreOn > 1) ? (uint8_t)(cfg.relayScoreOn - 1) : 1;
+            }
+            Serial.print("Relay score ON: "); Serial.println(cfg.relayScoreOn);
+        } else {
+            Serial.println("Entre 2 e 40. Ex: RON=10");
+        }
+    } else if (input.startsWith("ROFF=")) {
+        uint8_t v = (uint8_t)input.substring(5).toInt();
+        if (v >= 1 && v <= 39) {
+            cfg.relayScoreOff = v;
+            if (cfg.relayScoreOff >= cfg.relayScoreOn) {
+                cfg.relayScoreOff = (cfg.relayScoreOn > 1) ? (uint8_t)(cfg.relayScoreOn - 1) : 1;
+            }
+            Serial.print("Relay score OFF: "); Serial.println(cfg.relayScoreOff);
+        } else {
+            Serial.println("Entre 1 e 39. Ex: ROFF=4");
+        }
+    } else if (input.startsWith("RT=")) {
+        uint32_t v = (uint32_t)input.substring(3).toInt();
+        if (v >= 200) {
+            cfg.relayEvidenceTimeoutMs = v;
+            Serial.print("Relay timeout evidencia: "); Serial.print(v); Serial.println(" ms");
+        } else {
+            Serial.println("Minimo 200ms. Ex: RT=1200");
         }
     } else {
         serialPrintMenu();
