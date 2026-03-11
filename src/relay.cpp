@@ -1,15 +1,12 @@
 #include "relay.h"
 
 // ============================================================
-//  relay.cpp - pulsos periodicos com histerese/debounce de estado
+// relay.cpp - delayed ON, steady ON while movement is present
 // ============================================================
 
-typedef enum { WAITING, IN_PULSE } RelayState;
-static RelayState _state = WAITING;
-static unsigned long _lastMs = 0;
-static unsigned long _aboveThresholdSinceMs = 0;
-
-#define ACTIVATE_DEBOUNCE_MS 120UL
+static bool          _active = false;
+static unsigned long _movingSinceMs = 0;
+static bool          _moveQualified = false;
 
 void relayInit() {
     pinMode(RELAY_PIN, OUTPUT);
@@ -18,89 +15,54 @@ void relayInit() {
     Serial.print("Relay iniciado - GPIO"); Serial.println(RELAY_PIN);
 }
 
-static void _relayOn() {
-    digitalWrite(RELAY_PIN, RELAY_ACTIVE);
-    sys.relayOn = true;
-}
-
-static void _relayOff() {
-    digitalWrite(RELAY_PIN, RELAY_IDLE);
-    sys.relayOn = false;
-}
-
-void relayStopAll() {
-    _relayOff();
-}
+static void _on()  { digitalWrite(RELAY_PIN, RELAY_ACTIVE); sys.relayOn = true; }
+static void _off() { digitalWrite(RELAY_PIN, RELAY_IDLE);   sys.relayOn = false; }
 
 void relayUpdate() {
     unsigned long now = millis();
 
-    bool timeoutStopped = (sys.lastMoveMs == 0)
-                       || (now - sys.lastMoveMs >= cfg.stopTimeoutMs);
-    if (timeoutStopped) {
-        if (sys.active) {
-            sys.active = false;
-            _relayOff();
-            Serial.println("PARADO - timeout sem pulso");
+    // Encoder stopped: drop relay and reset qualification.
+    if (!sys.moving) {
+        _movingSinceMs = 0;
+        _moveQualified = false;
+
+        if (_active) {
+            _active = false;
+            _off();
+            Serial.println("PARADO - relay off");
         }
-        _aboveThresholdSinceMs = 0;
         return;
     }
 
-    if (!sys.active && sys.rpm >= cfg.thresholdRPM) {
-        if (_aboveThresholdSinceMs == 0) _aboveThresholdSinceMs = now;
-        if (now - _aboveThresholdSinceMs < ACTIVATE_DEBOUNCE_MS) return;
-
-        sys.active = true;
-        if (_state == WAITING) {
-            _state = IN_PULSE;
-            _lastMs = now;
-            _relayOn();
+    // Require continuous movement for a minimum time before relay activation.
+    if (_movingSinceMs == 0) {
+        _movingSinceMs = now;
+    }
+    if (!_moveQualified) {
+        if (now - _movingSinceMs < RELAY_START_DELAY_MS) {
+            return;
         }
-
-        Serial.print("ATIVO - ");
-        Serial.print(sys.rpm, 1);
-        Serial.println(" RPM");
-        _aboveThresholdSinceMs = 0;
-        return;
+        _moveQualified = true;
     }
 
-    if (!sys.active && sys.rpm < cfg.thresholdRPM) {
-        _aboveThresholdSinceMs = 0;
-        return;
-    }
-
-    switch (_state) {
-        case IN_PULSE:
-            if (now - _lastMs >= cfg.pulseOnMs) {
-                _relayOff();
-                _lastMs = now;
-                _state = WAITING;
-            }
-            break;
-
-        case WAITING:
-            if (now - _lastMs >= (cfg.pulseIntervalMs - cfg.pulseOnMs)) {
-                _lastMs = now;
-                _state = IN_PULSE;
-                _relayOn();
-            }
-            break;
+    // Qualified movement: keep relay continuously ON.
+    if (!_active) {
+        _active = true;
+        _on();
+        Serial.println("MOVENDO - relay iniciado");
     }
 }
 
 void relayForceOn() {
-    sys.active = true;
-    _state = IN_PULSE;
-    _lastMs = millis();
-    _aboveThresholdSinceMs = 0;
-    _relayOn();
+    _active = true;
+    _on();
     Serial.println("Relay forcado ON");
 }
 
 void relayForceOff() {
-    sys.active = false;
-    _aboveThresholdSinceMs = 0;
-    _relayOff();
+    _active = false;
+    _movingSinceMs = 0;
+    _moveQualified = false;
+    _off();
     Serial.println("Relay forcado OFF");
 }
