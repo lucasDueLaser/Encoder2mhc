@@ -31,7 +31,7 @@
 #define DEFAULT_STOP_RPM        1.0f
 #define DEFAULT_PULSE_ON_MS     100UL
 #define DEFAULT_PULSE_INTERVAL  500UL
-#define DEFAULT_STOP_TIMEOUT    300UL
+#define DEFAULT_STOP_TIMEOUT    1500UL
 
 // ============================================================
 //  INTERVALOS
